@@ -33,9 +33,9 @@ import { PermissoesModule } from './permissoes/permissoes.module';
       type: 'postgres',
       host: process.env.DB_HOST ?? 'localhost',
       port: Number(process.env.DB_PORT ?? 5432),
-      username: process.env.DB_USERNAME ?? 'piipefy',
-      password: process.env.DB_PASSWORD ?? 'piipefy',
-      database: process.env.DB_DATABASE ?? 'piipefy',
+      username: process.env.DB_USERNAME ?? 'flowly',
+      password: process.env.DB_PASSWORD ?? 'flowly',
+      database: process.env.DB_DATABASE ?? 'flowly',
       entities: [
         Processo,
         Fase,

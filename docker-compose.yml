@@ -7,17 +7,17 @@ services:
       PORT: ${PORT:-3000}
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USERNAME: ${POSTGRES_USER:-piipefy}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-piipefy}
-      DB_DATABASE: ${POSTGRES_DB:-piipefy}
+      DB_USERNAME: ${POSTGRES_USER:-flowly}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-flowly}
+      DB_DATABASE: ${POSTGRES_DB:-flowly}
       JWT_SECRET: ${JWT_SECRET:-troque-este-segredo-em-producao}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: 'false'
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-piipefy}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-piipefy123}
-      MINIO_BUCKET: ${MINIO_BUCKET:-piipefy-anexos}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-flowly}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-flowly123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-flowly-anexos}
     depends_on:
       postgres:
         condition: service_healthy
@@ -28,15 +28,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-piipefy}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-piipefy}
-      POSTGRES_DB: ${POSTGRES_DB:-piipefy}
+      POSTGRES_USER: ${POSTGRES_USER:-flowly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowly}
+      POSTGRES_DB: ${POSTGRES_DB:-flowly}
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-piipefy}']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-flowly}']
       interval: 5s
       timeout: 5s
       retries: 5
@@ -46,8 +46,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-piipefy}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-piipefy123}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-flowly}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-flowly123}
     ports:
       - '${MINIO_API_HOST_PORT:-9000}:9000'
       - '${MINIO_CONSOLE_HOST_PORT:-9001}:9001'

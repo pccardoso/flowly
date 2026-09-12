@@ -12,13 +12,13 @@ export class StorageService implements OnModuleInit {
   private readonly bucket: string;
 
   constructor() {
-    this.bucket = process.env.MINIO_BUCKET ?? 'piipefy-anexos';
+    this.bucket = process.env.MINIO_BUCKET ?? 'flowly-anexos';
     this.client = new Client({
       endPoint: process.env.MINIO_ENDPOINT ?? 'localhost',
       port: Number(process.env.MINIO_PORT ?? 9000),
       useSSL: process.env.MINIO_USE_SSL === 'true',
-      accessKey: process.env.MINIO_ACCESS_KEY ?? 'piipefy',
-      secretKey: process.env.MINIO_SECRET_KEY ?? 'piipefy123',
+      accessKey: process.env.MINIO_ACCESS_KEY ?? 'flowly',
+      secretKey: process.env.MINIO_SECRET_KEY ?? 'flowly123',
     });
   }
 
