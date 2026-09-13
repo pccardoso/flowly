@@ -9,6 +9,8 @@ import { Fase } from '../fases/entities/fase.entity';
 import { FaseTransicao } from '../fases/entities/fase-transicao.entity';
 import { Card } from './entities/card.entity';
 import { CardMovimentacao } from './entities/card-movimentacao.entity';
+import { CardEventoTipo } from './enums/card-evento-tipo.enum';
+import { AtorEvento, registrarEventoCard } from './card-evento.helper';
 import type { AutomacoesService } from '../automacoes/automacoes.service';
 
 export interface CriarCardEmFaseParams {
@@ -65,6 +67,7 @@ export async function criarCardEmFase(
   manager: EntityManager,
   automacoesService: AutomacoesService,
   params: CriarCardEmFaseParams,
+  ator: AtorEvento,
   cardsCriados?: Card[],
   profundidade = 0,
   cardsAtualizados?: Map<string, Card>,
@@ -108,6 +111,13 @@ export async function criarCardEmFase(
     }),
   );
 
+  await registrarEventoCard(manager, {
+    cardId: card.id,
+    tipo: CardEventoTipo.CARD_CRIADO,
+    ator,
+    dadosDepois: { titulo: card.titulo, faseId: faseInicial.id },
+  });
+
   await automacoesService.executarGatilhoCardEntrouNaFase(
     manager,
     card,
@@ -132,6 +142,7 @@ export async function moverCardParaFase(
   automacoesService: AutomacoesService,
   card: Card,
   faseDestinoId: string,
+  ator: AtorEvento,
   cardsCriados?: Card[],
   profundidade = 0,
   cardsAtualizados?: Map<string, Card>,
@@ -159,6 +170,9 @@ export async function moverCardParaFase(
   }
 
   const faseOrigemId = card.faseAtualId;
+  const faseOrigem = await manager.findOne(Fase, {
+    where: { id: faseOrigemId },
+  });
   card.faseAtualId = faseDestinoId;
   await manager.save(card);
   cardsAtualizados?.set(card.id, card);
@@ -170,6 +184,14 @@ export async function moverCardParaFase(
       faseDestinoId,
     }),
   );
+
+  await registrarEventoCard(manager, {
+    cardId: card.id,
+    tipo: CardEventoTipo.CARD_MOVIDO,
+    ator,
+    dadosAntes: { faseId: faseOrigemId, faseNome: faseOrigem?.nome ?? null },
+    dadosDepois: { faseId: faseDestinoId, faseNome: faseDestino.nome },
+  });
 
   await automacoesService.executarGatilhoCardEntrouNaFase(
     manager,

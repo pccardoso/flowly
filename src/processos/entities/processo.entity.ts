@@ -48,6 +48,19 @@ export class Processo {
   @Column({ name: 'titulo_campo_id', type: 'varchar', nullable: true })
   tituloCampoId!: string | null;
 
+  // Controla o link externo de formulário (ver FormulariosModule): tanto o
+  // do formulário de entrada (identificado só pelo processoId) quanto o
+  // futuro formulário de fase (processoId + faseId) — um único flag pro
+  // processo inteiro, não por fase. true = precisa de JWT válido pra
+  // visualizar/enviar; false = totalmente público. Default seguro: exige
+  // autenticação até alguém desligar explicitamente.
+  @Column({
+    name: 'formulario_externo_requer_autenticacao',
+    type: 'boolean',
+    default: true,
+  })
+  formularioExternoRequerAutenticacao!: boolean;
+
   @OneToMany(() => Fase, (fase) => fase.processo)
   fases!: Fase[];
 

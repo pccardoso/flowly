@@ -18,6 +18,9 @@ import { UpdateCardCamposDto } from './dto/update-card-campos.dto';
 import { MoverCardDto } from './dto/mover-card.dto';
 import { CreateCardFilhoDto } from './dto/create-card-filho.dto';
 import { criarCardEmFase, moverCardParaFase } from './card-creation.helper';
+import { registrarEventoCard } from './card-evento.helper';
+import { CardEvento } from './entities/card-evento.entity';
+import { CardEventoTipo } from './enums/card-evento-tipo.enum';
 import { interpolarTemplate } from '../common/template.util';
 import { montarPagina, PaginaResultado } from '../common/pagination';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
@@ -48,7 +51,10 @@ export interface ComentarioResumo {
   usuario: { id: string; nome: string };
 }
 
-export type CardComConexoes = Omit<Card, 'filhos' | 'comentarios' | 'anexos'> & {
+export type CardComConexoes = Omit<
+  Card,
+  'filhos' | 'comentarios' | 'anexos'
+> & {
   pai: PaiConexaoInfo | null;
   filhos: FilhoConexaoInfo[];
   totalComentarios: number;
@@ -94,6 +100,34 @@ export class CardsService {
       where: { cardId },
       order: { executadoEm: 'DESC' },
     });
+  }
+
+  // `tipo`, quando informado, filtra pra um único CardEventoTipo (ex.: só
+  // CARD_MOVIDO, pra reconstruir o caminho percorrido pelas fases).
+  async listarHistorico(
+    cardId: string,
+    tipo: CardEventoTipo | undefined,
+    page: number,
+    perPage: number,
+  ): Promise<PaginaResultado<CardEvento>> {
+    const card = await this.dataSource.manager.findOne(Card, {
+      where: { id: cardId },
+    });
+    if (!card) {
+      throw new NotFoundException('Card não encontrado');
+    }
+
+    const [eventos, total] = await this.dataSource.manager.findAndCount(
+      CardEvento,
+      {
+        where: tipo ? { cardId, tipo } : { cardId },
+        relations: { usuario: true },
+        order: { createdAt: 'DESC' },
+        skip: (page - 1) * perPage,
+        take: perPage,
+      },
+    );
+    return montarPagina(eventos, total, page, perPage);
   }
 
   async listarPorProcesso(processoId: string): Promise<CardComConexoes[]> {
@@ -299,7 +333,7 @@ export class CardsService {
     });
   }
 
-  async criar(dto: CreateCardDto): Promise<Card> {
+  async criar(dto: CreateCardDto, usuarioId: string | null): Promise<Card> {
     const cardsCriados: Card[] = [];
     const cardsAtualizados = new Map<string, Card>();
     const card = await this.dataSource.transaction((manager) =>
@@ -311,6 +345,7 @@ export class CardsService {
           titulo: dto.titulo,
           campos: dto.campos,
         },
+        { usuarioId, automatico: false },
         cardsCriados,
         0,
         cardsAtualizados,
@@ -325,6 +360,7 @@ export class CardsService {
     cardId: string,
     conexaoId: string,
     dto: CreateCardFilhoDto,
+    usuarioId: string,
   ): Promise<Card> {
     const cardsCriados: Card[] = [];
     const cardsAtualizados = new Map<string, Card>();
@@ -360,6 +396,7 @@ export class CardsService {
             ? interpolarTemplate(dto.titulo, card.campos)
             : card.titulo,
         },
+        { usuarioId, automatico: false },
         cardsCriados,
         0,
         cardsAtualizados,
@@ -403,6 +440,7 @@ export class CardsService {
   async atualizarCampos(
     cardId: string,
     dto: UpdateCardCamposDto,
+    usuarioId: string,
   ): Promise<Card> {
     const cardsCriados: Card[] = [];
     const cardsAtualizados = new Map<string, Card>();
@@ -412,9 +450,25 @@ export class CardsService {
         throw new NotFoundException('Card não encontrado');
       }
 
+      const camposAntigos = card.campos;
       card.campos = { ...card.campos, ...dto.campos };
       await manager.save(card);
       cardsAtualizados.set(card.id, card);
+
+      for (const chave of Object.keys(dto.campos)) {
+        const valorAntigo = camposAntigos[chave];
+        const valorNovo = card.campos[chave];
+        if (JSON.stringify(valorAntigo) === JSON.stringify(valorNovo)) {
+          continue;
+        }
+        await registrarEventoCard(manager, {
+          cardId: card.id,
+          tipo: CardEventoTipo.CAMPO_ATUALIZADO,
+          ator: { usuarioId, automatico: false },
+          dadosAntes: { [chave]: valorAntigo ?? null },
+          dadosDepois: { [chave]: valorNovo },
+        });
+      }
 
       await this.automacoesService.executarGatilhoCampoAtualizado(
         manager,
@@ -432,7 +486,11 @@ export class CardsService {
     return card;
   }
 
-  async mover(cardId: string, dto: MoverCardDto): Promise<CardMovimentacao> {
+  async mover(
+    cardId: string,
+    dto: MoverCardDto,
+    usuarioId: string,
+  ): Promise<CardMovimentacao> {
     const cardsCriados: Card[] = [];
     const cardsAtualizados = new Map<string, Card>();
     const movimentacao = await this.dataSource.transaction(async (manager) => {
@@ -446,6 +504,7 @@ export class CardsService {
         this.automacoesService,
         card,
         dto.faseDestinoId,
+        { usuarioId, automatico: false },
         cardsCriados,
         0,
         cardsAtualizados,

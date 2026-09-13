@@ -1,4 +1,9 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 
 @Entity('users')
 export class User {
@@ -12,7 +17,11 @@ export class User {
   email!: string;
 
   // Hash bcrypt — nunca expor em resposta de API (ver UsersService.paraResposta).
-  @Column({ name: 'senha_hash' })
+  // select:false: qualquer relation que carregue User (ex.: CardComentario.
+  // usuario, CardEvento.usuario) fica automaticamente sem esse campo, sem
+  // precisar de sanitização manual em cada ponto — só quem pedir
+  // explicitamente (UsersService.buscarPorEmail, pro login) recebe.
+  @Column({ name: 'senha_hash', select: false })
   senhaHash!: string;
 
   // Ignora toda checagem de PermissoesGuard — existe só pra bootstrap (o

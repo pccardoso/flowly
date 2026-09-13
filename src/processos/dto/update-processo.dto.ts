@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsHexColor,
   IsNotEmpty,
   IsOptional,
@@ -34,4 +35,10 @@ export class UpdateProcessoDto {
   @IsString()
   @IsNotEmpty()
   tituloCampoId?: string;
+
+  // Se o link externo de formulário (entrada ou, futuramente, de fase)
+  // exige JWT válido pra visualizar/enviar. Ver FormulariosModule.
+  @IsOptional()
+  @IsBoolean()
+  formularioExternoRequerAutenticacao?: boolean;
 }

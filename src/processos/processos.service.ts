@@ -46,6 +46,7 @@ export interface ProcessoResposta {
   imagemUrl: string | null;
   camposExibidosNoCard: string[];
   tituloCampoId: string | null;
+  formularioExternoRequerAutenticacao: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,6 +83,8 @@ export class ProcessosService {
         : null,
       camposExibidosNoCard: processo.camposExibidosNoCard,
       tituloCampoId: processo.tituloCampoId,
+      formularioExternoRequerAutenticacao:
+        processo.formularioExternoRequerAutenticacao,
       createdAt: processo.createdAt,
       updatedAt: processo.updatedAt,
     };
@@ -135,7 +138,10 @@ export class ProcessosService {
     return this.paraResposta(processo);
   }
 
-  async atualizar(id: string, dto: UpdateProcessoDto): Promise<ProcessoResposta> {
+  async atualizar(
+    id: string,
+    dto: UpdateProcessoDto,
+  ): Promise<ProcessoResposta> {
     const processo = await this.processoRepository.findOne({
       where: { id },
     });
@@ -163,6 +169,10 @@ export class ProcessosService {
     if (dto.tituloCampoId !== undefined) {
       this.validarIdsDoFormulario(processo, [dto.tituloCampoId]);
       processo.tituloCampoId = dto.tituloCampoId;
+    }
+    if (dto.formularioExternoRequerAutenticacao !== undefined) {
+      processo.formularioExternoRequerAutenticacao =
+        dto.formularioExternoRequerAutenticacao;
     }
 
     const salvo = await this.processoRepository.save(processo);
@@ -295,9 +305,7 @@ export class ProcessosService {
               new Set(filhosComPaiExterno.map((c) => c.paiCardId as string)),
             );
             const conexaoIds = Array.from(
-              new Set(
-                filhosComPaiExterno.map((c) => c.paiConexaoId as string),
-              ),
+              new Set(filhosComPaiExterno.map((c) => c.paiConexaoId as string)),
             );
 
             const pais = await manager.find(Card, {
@@ -317,7 +325,11 @@ export class ProcessosService {
               const posicao = posicaoPorConexao.get(
                 filho.paiConexaoId as string,
               );
-              if (pai && posicao !== undefined && pai.filhos[posicao] === filho.id) {
+              if (
+                pai &&
+                posicao !== undefined &&
+                pai.filhos[posicao] === filho.id
+              ) {
                 const filhosArray = [...pai.filhos];
                 filhosArray[posicao] = null;
                 pai.filhos = filhosArray;
@@ -437,9 +449,7 @@ export class ProcessosService {
               new Set(filhosComPaiExterno.map((c) => c.paiCardId as string)),
             );
             const conexaoIds = Array.from(
-              new Set(
-                filhosComPaiExterno.map((c) => c.paiConexaoId as string),
-              ),
+              new Set(filhosComPaiExterno.map((c) => c.paiConexaoId as string)),
             );
 
             const pais = await manager.find(Card, {
@@ -459,7 +469,11 @@ export class ProcessosService {
               const posicao = posicaoPorConexao.get(
                 filho.paiConexaoId as string,
               );
-              if (pai && posicao !== undefined && pai.filhos[posicao] === filho.id) {
+              if (
+                pai &&
+                posicao !== undefined &&
+                pai.filhos[posicao] === filho.id
+              ) {
                 const filhosArray = [...pai.filhos];
                 filhosArray[posicao] = null;
                 pai.filhos = filhosArray;
@@ -488,7 +502,9 @@ export class ProcessosService {
     );
 
     await Promise.allSettled(
-      anexoObjectKeys.map((objectKey) => this.storageService.remover(objectKey)),
+      anexoObjectKeys.map((objectKey) =>
+        this.storageService.remover(objectKey),
+      ),
     );
   }
 
@@ -526,7 +542,10 @@ export class ProcessosService {
     } catch (error) {
       const driverCode = (error as { driverError?: { code?: string } })
         .driverError?.code;
-      if (error instanceof QueryFailedError && driverCode === UNIQUE_VIOLATION) {
+      if (
+        error instanceof QueryFailedError &&
+        driverCode === UNIQUE_VIOLATION
+      ) {
         throw new ConflictException('Essa transição já está cadastrada');
       }
       throw error;
@@ -579,7 +598,10 @@ export class ProcessosService {
     } catch (error) {
       const driverCode = (error as { driverError?: { code?: string } })
         .driverError?.code;
-      if (error instanceof QueryFailedError && driverCode === UNIQUE_VIOLATION) {
+      if (
+        error instanceof QueryFailedError &&
+        driverCode === UNIQUE_VIOLATION
+      ) {
         throw new ConflictException('Essa transição já está cadastrada');
       }
       throw error;
@@ -629,15 +651,13 @@ export class ProcessosService {
       );
     }
 
-    const conexaoAtivaExistente = await this.processoConexaoRepository.findOne(
-      {
-        where: {
-          processoOrigemId,
-          processoDestinoId: dto.processoDestinoId,
-          ativo: true,
-        },
+    const conexaoAtivaExistente = await this.processoConexaoRepository.findOne({
+      where: {
+        processoOrigemId,
+        processoDestinoId: dto.processoDestinoId,
+        ativo: true,
       },
-    );
+    });
     if (conexaoAtivaExistente) {
       throw new ConflictException(
         'Já existe uma conexão ativa para este processo de destino',

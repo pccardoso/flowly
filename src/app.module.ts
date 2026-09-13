@@ -10,6 +10,7 @@ import { Card } from './cards/entities/card.entity';
 import { CardMovimentacao } from './cards/entities/card-movimentacao.entity';
 import { CardAnexo } from './cards/entities/card-anexo.entity';
 import { CardComentario } from './cards/entities/card-comentario.entity';
+import { CardEvento } from './cards/entities/card-evento.entity';
 import { User } from './users/entities/user.entity';
 import { Automacao } from './automacoes/entities/automacao.entity';
 import { AutomacaoAcao } from './automacoes/entities/automacao-acao.entity';
@@ -26,6 +27,7 @@ import { AutomacoesModule } from './automacoes/automacoes.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { PermissoesModule } from './permissoes/permissoes.module';
+import { FormulariosModule } from './formularios/formularios.module';
 
 @Module({
   imports: [
@@ -45,6 +47,7 @@ import { PermissoesModule } from './permissoes/permissoes.module';
         CardMovimentacao,
         CardAnexo,
         CardComentario,
+        CardEvento,
         User,
         Automacao,
         AutomacaoAcao,
@@ -64,6 +67,7 @@ import { PermissoesModule } from './permissoes/permissoes.module';
     UsersModule,
     AuthModule,
     PermissoesModule,
+    FormulariosModule,
   ],
   controllers: [AppController],
   providers: [AppService],

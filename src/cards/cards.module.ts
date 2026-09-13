@@ -8,6 +8,7 @@ import { Card } from './entities/card.entity';
 import { CardMovimentacao } from './entities/card-movimentacao.entity';
 import { CardAnexo } from './entities/card-anexo.entity';
 import { CardComentario } from './entities/card-comentario.entity';
+import { CardEvento } from './entities/card-evento.entity';
 import { Processo } from '../processos/entities/processo.entity';
 import { Fase } from '../fases/entities/fase.entity';
 import { FaseTransicao } from '../fases/entities/fase-transicao.entity';
@@ -24,6 +25,7 @@ import { PermissoesModule } from '../permissoes/permissoes.module';
       CardMovimentacao,
       CardAnexo,
       CardComentario,
+      CardEvento,
       Processo,
       Fase,
       FaseTransicao,
@@ -36,5 +38,6 @@ import { PermissoesModule } from '../permissoes/permissoes.module';
   ],
   controllers: [CardsController],
   providers: [CardsService, CardAnexosService, ComentariosService],
+  exports: [CardsService, CardAnexosService],
 })
 export class CardsModule {}

@@ -27,11 +27,17 @@ import { UpdateCardCamposDto } from './dto/update-card-campos.dto';
 import { MoverCardDto } from './dto/mover-card.dto';
 import { CreateCardFilhoDto } from './dto/create-card-filho.dto';
 import { ListarCardsPaginadoQueryDto } from './dto/listar-cards-paginado-query.dto';
+import { ListarHistoricoQueryDto } from './dto/listar-historico-query.dto';
 import { CreateComentarioDto } from './dto/create-comentario.dto';
-import { RemoverComentarioDto } from './dto/remover-comentario.dto';
 import { PermissoesGuard } from '../permissoes/guards/permissoes.guard';
 import { RequerPermissao } from '../permissoes/decorators/requer-permissao.decorator';
-import { porBody, porCard, porQuery } from '../permissoes/decorators/resolvedores';
+import {
+  porBody,
+  porCard,
+  porQuery,
+} from '../permissoes/decorators/resolvedores';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 
 const TAMANHO_MAXIMO_ANEXO = 25 * 1024 * 1024;
 
@@ -62,8 +68,8 @@ export class CardsController {
 
   @Post()
   @RequerPermissao('card.criar', porBody('processoId'))
-  criar(@Body() dto: CreateCardDto) {
-    return this.cardsService.criar(dto);
+  criar(@Body() dto: CreateCardDto, @CurrentUser() usuario: JwtPayload) {
+    return this.cardsService.criar(dto, usuario.sub);
   }
 
   @Patch(':id/campos')
@@ -71,8 +77,9 @@ export class CardsController {
   atualizarCampos(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCardCamposDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.cardsService.atualizarCampos(id, dto);
+    return this.cardsService.atualizarCampos(id, dto, usuario.sub);
   }
 
   @Post(':id/movimentacoes')
@@ -80,14 +87,29 @@ export class CardsController {
   mover(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: MoverCardDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.cardsService.mover(id, dto);
+    return this.cardsService.mover(id, dto, usuario.sub);
   }
 
   @Get(':id/automacoes-execucoes')
   @RequerPermissao('card.visualizar', porCard())
   listarExecucoes(@Param('id', ParseUUIDPipe) id: string) {
     return this.cardsService.listarExecucoes(id);
+  }
+
+  @Get(':id/historico')
+  @RequerPermissao('card.visualizar', porCard())
+  listarHistorico(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ListarHistoricoQueryDto,
+  ) {
+    return this.cardsService.listarHistorico(
+      id,
+      query.tipo,
+      query.page,
+      query.perPage,
+    );
   }
 
   @Get(':id')
@@ -102,8 +124,9 @@ export class CardsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('conexaoId', ParseUUIDPipe) conexaoId: string,
     @Body() dto: CreateCardFilhoDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.cardsService.criarFilho(id, conexaoId, dto);
+    return this.cardsService.criarFilho(id, conexaoId, dto, usuario.sub);
   }
 
   @Delete(':id')
@@ -123,6 +146,7 @@ export class CardsController {
   )
   enviarAnexo(
     @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() usuario: JwtPayload,
     @UploadedFile() arquivo?: Express.Multer.File,
   ) {
     if (!arquivo) {
@@ -130,7 +154,7 @@ export class CardsController {
         'Arquivo é obrigatório (campo multipart "arquivo")',
       );
     }
-    return this.cardAnexosService.enviar(id, arquivo);
+    return this.cardAnexosService.enviar(id, arquivo, usuario.sub);
   }
 
   @Get(':id/anexos')
@@ -146,10 +170,7 @@ export class CardsController {
     @Param('anexoId', ParseUUIDPipe) anexoId: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    const { anexo, stream } = await this.cardAnexosService.baixar(
-      id,
-      anexoId,
-    );
+    const { anexo, stream } = await this.cardAnexosService.baixar(id, anexoId);
     res.set({
       'Content-Type': anexo.mimeType,
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(anexo.nomeOriginal)}`,
@@ -164,8 +185,9 @@ export class CardsController {
   removerAnexo(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('anexoId', ParseUUIDPipe) anexoId: string,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.cardAnexosService.remover(id, anexoId);
+    return this.cardAnexosService.remover(id, anexoId, usuario.sub);
   }
 
   @Post(':id/comentarios')
@@ -173,8 +195,9 @@ export class CardsController {
   criarComentario(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateComentarioDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.comentariosService.criar(id, dto);
+    return this.comentariosService.criar(id, dto, usuario.sub);
   }
 
   @Get(':id/comentarios')
@@ -189,8 +212,9 @@ export class CardsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('comentarioId', ParseUUIDPipe) comentarioId: string,
     @Body() dto: CreateComentarioDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.comentariosService.editar(id, comentarioId, dto);
+    return this.comentariosService.editar(id, comentarioId, dto, usuario.sub);
   }
 
   @Delete(':id/comentarios/:comentarioId')
@@ -199,8 +223,8 @@ export class CardsController {
   removerComentario(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('comentarioId', ParseUUIDPipe) comentarioId: string,
-    @Body() dto: RemoverComentarioDto,
+    @CurrentUser() usuario: JwtPayload,
   ) {
-    return this.comentariosService.remover(id, comentarioId, dto);
+    return this.comentariosService.remover(id, comentarioId, usuario.sub);
   }
 }

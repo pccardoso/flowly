@@ -9,7 +9,15 @@ import { Processo } from '../processos/entities/processo.entity';
 import { Fase } from '../fases/entities/fase.entity';
 import { ProcessoConexao } from '../processos/entities/processo-conexao.entity';
 import { Card } from '../cards/entities/card.entity';
-import { criarCardEmFase, moverCardParaFase } from '../cards/card-creation.helper';
+import {
+  criarCardEmFase,
+  moverCardParaFase,
+} from '../cards/card-creation.helper';
+import {
+  ATOR_AUTOMATICO,
+  registrarEventoCard,
+} from '../cards/card-evento.helper';
+import { CardEventoTipo } from '../cards/enums/card-evento-tipo.enum';
 import { interpolarTemplate } from '../common/template.util';
 import { Automacao } from './entities/automacao.entity';
 import { AutomacaoAcao } from './entities/automacao-acao.entity';
@@ -463,6 +471,7 @@ export class AutomacoesService {
           campo: string;
           valor: unknown;
         };
+        const valorAntigo = card.campos[campo];
         const valorResolvido =
           typeof valor === 'string'
             ? interpolarTemplate(valor, card.campos)
@@ -470,6 +479,13 @@ export class AutomacoesService {
         card.campos = { ...card.campos, [campo]: valorResolvido };
         await manager.save(card);
         cardsAtualizados?.set(card.id, card);
+        await registrarEventoCard(manager, {
+          cardId: card.id,
+          tipo: CardEventoTipo.CAMPO_ATUALIZADO,
+          ator: ATOR_AUTOMATICO,
+          dadosAntes: { [campo]: valorAntigo ?? null },
+          dadosDepois: { [campo]: valorResolvido },
+        });
         await this.executarGatilhoCampoAtualizado(
           manager,
           card,
@@ -482,9 +498,17 @@ export class AutomacoesService {
       }
       case AcaoTipo.ATUALIZAR_TITULO: {
         const { titulo } = acao.config as { titulo: string };
+        const tituloAntigo = card.titulo;
         card.titulo = interpolarTemplate(titulo, card.campos);
         await manager.save(card);
         cardsAtualizados?.set(card.id, card);
+        await registrarEventoCard(manager, {
+          cardId: card.id,
+          tipo: CardEventoTipo.TITULO_ATUALIZADO,
+          ator: ATOR_AUTOMATICO,
+          dadosAntes: { titulo: tituloAntigo },
+          dadosDepois: { titulo: card.titulo },
+        });
         return;
       }
       case AcaoTipo.CRIAR_CARD_FILHO: {
@@ -512,6 +536,7 @@ export class AutomacoesService {
               ? interpolarTemplate(titulo, card.campos)
               : card.titulo,
           },
+          ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
@@ -546,6 +571,7 @@ export class AutomacoesService {
           this,
           cardPai,
           faseDestinoId,
+          ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
@@ -576,6 +602,7 @@ export class AutomacoesService {
           this,
           cardFilho,
           faseDestinoId,
+          ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
@@ -589,6 +616,7 @@ export class AutomacoesService {
           this,
           card,
           faseDestinoId,
+          ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,

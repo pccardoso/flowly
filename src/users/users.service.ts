@@ -44,7 +44,10 @@ export class UsersService {
     } catch (error) {
       const driverCode = (error as { driverError?: { code?: string } })
         .driverError?.code;
-      if (error instanceof QueryFailedError && driverCode === UNIQUE_VIOLATION) {
+      if (
+        error instanceof QueryFailedError &&
+        driverCode === UNIQUE_VIOLATION
+      ) {
         throw new ConflictException('Já existe um usuário com esse email');
       }
       throw error;
@@ -58,9 +61,19 @@ export class UsersService {
     return usuarios.map((usuario) => this.paraResposta(usuario));
   }
 
+  // Único ponto que precisa de senhaHash (comparação de senha no login) —
+  // select:false na coluna exige pedir explicitamente aqui.
   async buscarPorEmail(email: string): Promise<User | null> {
     return this.dataSource.manager.findOne(User, {
       where: { email: email.toLowerCase() },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        senhaHash: true,
+        isSuperAdmin: true,
+        createdAt: true,
+      },
     });
   }
 }
