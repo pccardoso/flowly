@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   OneToMany,
@@ -13,6 +14,8 @@ import { Fase } from '../../fases/entities/fase.entity';
 import { CardMovimentacao } from './card-movimentacao.entity';
 import { CardAnexo } from './card-anexo.entity';
 import { CardComentario } from './card-comentario.entity';
+import { CardResponsavel } from './card-responsavel.entity';
+import type { EtiquetaResumo } from '../../etiquetas/etiqueta.types';
 
 @Entity('cards')
 export class Card {
@@ -40,6 +43,12 @@ export class Card {
   @Column({ name: 'pai_conexao_id', type: 'uuid', nullable: true })
   paiConexaoId!: string | null;
 
+  // Data/hora de vencimento (opcional). O estado (no prazo / prestes a vencer
+  // / vencido) nunca é gravado: é calculado em vencimento.util.ts.
+  @Index(['processoId', 'dataVencimento'])
+  @Column({ name: 'data_vencimento', type: 'timestamptz', nullable: true })
+  dataVencimento!: Date | null;
+
   @ManyToOne(() => Processo, (processo) => processo.cards, {
     onDelete: 'CASCADE',
   })
@@ -64,6 +73,15 @@ export class Card {
 
   @OneToMany(() => CardComentario, (comentario) => comentario.card)
   comentarios!: CardComentario[];
+
+  @OneToMany(() => CardResponsavel, (responsavel) => responsavel.card)
+  responsaveis!: CardResponsavel[];
+
+  // NÃO é coluna nem relation: só um "carimbo" transitório preenchido por
+  // quem emite `card:atualizado` sabendo as etiquetas atuais (rotas de
+  // etiqueta e step ACAO_APLICAR_ETIQUETA), pra o front não precisar
+  // rebuscar. Ausente = "não sei", e o front mantém as etiquetas locais.
+  etiquetas?: EtiquetaResumo[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

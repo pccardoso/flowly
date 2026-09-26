@@ -12,6 +12,7 @@ export interface LoginResposta {
     nome: string;
     email: string;
     isSuperAdmin: boolean;
+    avatarUrl: string | null;
   };
 }
 
@@ -29,6 +30,13 @@ export class AuthService {
     if (!usuario || !(await bcrypt.compare(dto.senha, usuario.senhaHash))) {
       throw new UnauthorizedException('Email ou senha inválidos');
     }
+    // Só checa depois de confirmar a senha: quem chegou até aqui já provou
+    // que é o dono da conta, então dizer "está bloqueado" não vaza nada novo
+    // pra quem não tem a senha (esses continuam recebendo a mensagem
+    // genérica acima).
+    if (usuario.bloqueado) {
+      throw new UnauthorizedException('Usuário bloqueado');
+    }
 
     const payload: JwtPayload = {
       sub: usuario.id,
@@ -43,6 +51,9 @@ export class AuthService {
         nome: usuario.nome,
         email: usuario.email,
         isSuperAdmin: usuario.isSuperAdmin,
+        avatarUrl: usuario.avatarObjectKey
+          ? `/usuarios/${usuario.id}/avatar`
+          : null,
       },
     };
   }

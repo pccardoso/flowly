@@ -28,6 +28,7 @@ import { CreateFaseTransicaoDto } from './dto/create-fase-transicao.dto';
 import { UpdateFaseTransicaoDto } from './dto/update-fase-transicao.dto';
 import { CreateProcessoConexaoDto } from './dto/create-processo-conexao.dto';
 import { DefinirFormularioEntradaDto } from './dto/definir-formulario-entrada.dto';
+import { DefinirFormularioFaseDto } from './dto/definir-formulario-fase.dto';
 import { PermissoesGuard } from '../permissoes/guards/permissoes.guard';
 import { PermissoesService } from '../permissoes/permissoes.service';
 import { RequerPermissao } from '../permissoes/decorators/requer-permissao.decorator';
@@ -148,6 +149,16 @@ export class ProcessosController {
     @Body() dto: UpdateFaseDto,
   ) {
     return this.processosService.atualizarFase(id, faseId, dto);
+  }
+
+  @Put(':id/fases/:faseId/formulario-fase')
+  @RequerPermissao('fase.editar', porParametro('id'))
+  definirFormularioFase(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('faseId', ParseUUIDPipe) faseId: string,
+    @Body() dto: DefinirFormularioFaseDto,
+  ) {
+    return this.processosService.definirFormularioFase(id, faseId, dto);
   }
 
   @Delete(':id/fases/:faseId')

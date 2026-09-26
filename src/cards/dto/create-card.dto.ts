@@ -1,4 +1,11 @@
-import { IsNotEmpty, IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsDateString,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateCardDto {
   // Opcional se o processo tiver `tituloCampoId` configurado e o campo
@@ -18,4 +25,9 @@ export class CreateCardDto {
   @IsObject()
   @IsOptional()
   campos?: Record<string, unknown>;
+
+  // Data/hora de vencimento em ISO 8601 (ex.: 2026-09-25T20:00:00Z).
+  @IsOptional()
+  @IsDateString()
+  dataVencimento?: string;
 }

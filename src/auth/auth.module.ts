@@ -16,15 +16,13 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       // obrigatório fora de dev.
       secret: process.env.JWT_SECRET ?? 'dev-secret-troque-em-producao',
       signOptions: {
-        expiresIn: (process.env.JWT_EXPIRES_IN ?? '8h') as JwtSignOptions['expiresIn'],
+        expiresIn: (process.env.JWT_EXPIRES_IN ??
+          '8h') as JwtSignOptions['expiresIn'],
       },
     }),
   ],
   controllers: [AuthController],
-  providers: [
-    AuthService,
-    { provide: APP_GUARD, useClass: JwtAuthGuard },
-  ],
+  providers: [AuthService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
   exports: [JwtModule],
 })
 export class AuthModule {}

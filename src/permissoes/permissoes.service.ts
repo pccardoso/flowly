@@ -71,7 +71,9 @@ export class PermissoesService implements OnModuleInit {
   }
 
   listarCatalogo(): Promise<Permissao[]> {
-    return this.permissaoRepository.find({ order: { entidade: 'ASC', evento: 'ASC' } });
+    return this.permissaoRepository.find({
+      order: { entidade: 'ASC', evento: 'ASC' },
+    });
   }
 
   // Resolução de permissão de um usuário (ver permissions.md, seção 3.1):
@@ -87,6 +89,19 @@ export class PermissoesService implements OnModuleInit {
     alias: string,
     processoId?: string,
   ): Promise<boolean> {
+    // Checagem central, defensiva: mesmo que algum chamador esqueça de
+    // filtrar usuário bloqueado antes de chegar aqui (ex.: conta de serviço
+    // de um step de Integração), este método nunca concede nada pra um
+    // bloqueado — nem isSuperAdmin, que é resolvido pelos chamadores antes
+    // de chegar aqui.
+    const usuario = await this.userRepository.findOne({
+      where: { id: usuarioId },
+      select: { id: true, bloqueado: true },
+    });
+    if (!usuario || usuario.bloqueado) {
+      return false;
+    }
+
     const permissao = await this.permissaoRepository.findOne({
       where: { alias },
     });
@@ -110,21 +125,19 @@ export class PermissoesService implements OnModuleInit {
       });
     }
 
-    const conceditoNoProcesso = await this.grupoProcessoPermissaoRepository.exists(
-      {
+    const conceditoNoProcesso =
+      await this.grupoProcessoPermissaoRepository.exists({
         where: { grupoId: In(grupoIds), processoId, permissaoId: permissao.id },
-      },
-    );
+      });
     if (conceditoNoProcesso) {
       return true;
     }
 
-    const gruposComOverrideNoProcesso = await this.grupoProcessoPermissaoRepository.find(
-      {
+    const gruposComOverrideNoProcesso =
+      await this.grupoProcessoPermissaoRepository.find({
         where: { grupoId: In(grupoIds), processoId },
         select: { grupoId: true },
-      },
-    );
+      });
     const idsComOverride = new Set(
       gruposComOverrideNoProcesso.map((g) => g.grupoId),
     );
@@ -136,24 +149,31 @@ export class PermissoesService implements OnModuleInit {
     }
 
     return this.grupoOrgPermissaoRepository.exists({
-      where: { grupoId: In(grupoIdsParaOrganizacao), permissaoId: permissao.id },
+      where: {
+        grupoId: In(grupoIdsParaOrganizacao),
+        permissaoId: permissao.id,
+      },
     });
   }
 
   private async paraDetalhado(grupo: Grupo): Promise<GrupoDetalhado> {
-    const [membrosVinculo, processosVinculo, permissoesOrg, permissoesProcesso] =
-      await Promise.all([
-        this.grupoUsuarioRepository.find({ where: { grupoId: grupo.id } }),
-        this.grupoProcessoRepository.find({ where: { grupoId: grupo.id } }),
-        this.grupoOrgPermissaoRepository.find({
-          where: { grupoId: grupo.id },
-          relations: { permissao: true },
-        }),
-        this.grupoProcessoPermissaoRepository.find({
-          where: { grupoId: grupo.id },
-          relations: { permissao: true },
-        }),
-      ]);
+    const [
+      membrosVinculo,
+      processosVinculo,
+      permissoesOrg,
+      permissoesProcesso,
+    ] = await Promise.all([
+      this.grupoUsuarioRepository.find({ where: { grupoId: grupo.id } }),
+      this.grupoProcessoRepository.find({ where: { grupoId: grupo.id } }),
+      this.grupoOrgPermissaoRepository.find({
+        where: { grupoId: grupo.id },
+        relations: { permissao: true },
+      }),
+      this.grupoProcessoPermissaoRepository.find({
+        where: { grupoId: grupo.id },
+        relations: { permissao: true },
+      }),
+    ]);
 
     const usuarioIds = membrosVinculo.map((v) => v.usuarioId);
     const usuarios = usuarioIds.length
@@ -178,7 +198,11 @@ export class PermissoesService implements OnModuleInit {
     return {
       id: grupo.id,
       nome: grupo.nome,
-      membros: usuarios.map((u) => ({ id: u.id, nome: u.nome, email: u.email })),
+      membros: usuarios.map((u) => ({
+        id: u.id,
+        nome: u.nome,
+        email: u.email,
+      })),
       processos: processos.map((p) => ({ id: p.id, nome: p.nome })),
       permissoesOrganizacao: permissoesOrg.map((p) => p.permissao.alias),
       permissoesPorProcesso,
@@ -200,7 +224,9 @@ export class PermissoesService implements OnModuleInit {
   }
 
   private async buscarGrupoOuFalhar(grupoId: string): Promise<Grupo> {
-    const grupo = await this.grupoRepository.findOne({ where: { id: grupoId } });
+    const grupo = await this.grupoRepository.findOne({
+      where: { id: grupoId },
+    });
     if (!grupo) {
       throw new NotFoundException('Grupo não encontrado');
     }
@@ -224,9 +250,14 @@ export class PermissoesService implements OnModuleInit {
     await this.grupoRepository.delete(grupoId);
   }
 
-  async adicionarMembro(grupoId: string, usuarioId: string): Promise<GrupoDetalhado> {
+  async adicionarMembro(
+    grupoId: string,
+    usuarioId: string,
+  ): Promise<GrupoDetalhado> {
     await this.buscarGrupoOuFalhar(grupoId);
-    const usuario = await this.userRepository.findOne({ where: { id: usuarioId } });
+    const usuario = await this.userRepository.findOne({
+      where: { id: usuarioId },
+    });
     if (!usuario) {
       throw new NotFoundException('Usuário não encontrado');
     }
@@ -244,15 +275,23 @@ export class PermissoesService implements OnModuleInit {
     return this.buscarGrupo(grupoId);
   }
 
-  async removerMembro(grupoId: string, usuarioId: string): Promise<GrupoDetalhado> {
+  async removerMembro(
+    grupoId: string,
+    usuarioId: string,
+  ): Promise<GrupoDetalhado> {
     await this.buscarGrupoOuFalhar(grupoId);
     await this.grupoUsuarioRepository.delete({ grupoId, usuarioId });
     return this.buscarGrupo(grupoId);
   }
 
-  async associarProcesso(grupoId: string, processoId: string): Promise<GrupoDetalhado> {
+  async associarProcesso(
+    grupoId: string,
+    processoId: string,
+  ): Promise<GrupoDetalhado> {
     await this.buscarGrupoOuFalhar(grupoId);
-    const processo = await this.processoRepository.findOne({ where: { id: processoId } });
+    const processo = await this.processoRepository.findOne({
+      where: { id: processoId },
+    });
     if (!processo) {
       throw new NotFoundException('Processo não encontrado');
     }
@@ -273,7 +312,10 @@ export class PermissoesService implements OnModuleInit {
   // Desassociar remove também qualquer override de Processo que o grupo
   // tivesse nele (grupo_processo_permissoes), senão ficariam linhas órfãs
   // referenciando uma associação que não existe mais.
-  async desassociarProcesso(grupoId: string, processoId: string): Promise<GrupoDetalhado> {
+  async desassociarProcesso(
+    grupoId: string,
+    processoId: string,
+  ): Promise<GrupoDetalhado> {
     await this.buscarGrupoOuFalhar(grupoId);
     await this.grupoProcessoPermissaoRepository.delete({ grupoId, processoId });
     await this.grupoProcessoRepository.delete({ grupoId, processoId });
@@ -309,7 +351,10 @@ export class PermissoesService implements OnModuleInit {
     if (permissoes.length > 0) {
       await this.grupoOrgPermissaoRepository.save(
         permissoes.map((p) =>
-          this.grupoOrgPermissaoRepository.create({ grupoId, permissaoId: p.id }),
+          this.grupoOrgPermissaoRepository.create({
+            grupoId,
+            permissaoId: p.id,
+          }),
         ),
       );
     }

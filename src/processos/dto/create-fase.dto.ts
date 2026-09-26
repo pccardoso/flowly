@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsHexColor,
   IsInt,
   IsNotEmpty,
@@ -19,4 +20,8 @@ export class CreateFaseDto {
   @IsOptional()
   @IsHexColor()
   cor?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isFinal?: boolean;
 }
