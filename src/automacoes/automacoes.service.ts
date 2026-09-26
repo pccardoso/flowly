@@ -4,7 +4,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Processo } from '../processos/entities/processo.entity';
 import { Fase } from '../fases/entities/fase.entity';
 import { ProcessoConexao } from '../processos/entities/processo-conexao.entity';
@@ -18,7 +18,10 @@ import {
   registrarEventoCard,
 } from '../cards/card-evento.helper';
 import { CardEventoTipo } from '../cards/enums/card-evento-tipo.enum';
+import { dispararGatilhosCampoAtualizado } from '../cards/gatilho-dispatch.helper';
 import { interpolarTemplate } from '../common/template.util';
+import type { IntegracoesService } from '../integracoes/integracoes.service';
+import type { NotificacaoEnfileirada } from '../integracoes/notificacao-enfileirada.interface';
 import { Automacao } from './entities/automacao.entity';
 import { AutomacaoAcao } from './entities/automacao-acao.entity';
 import { AutomacaoExecucao } from './entities/automacao-execucao.entity';
@@ -49,6 +52,7 @@ export class AutomacoesService {
     private readonly faseRepository: Repository<Fase>,
     @InjectRepository(ProcessoConexao)
     private readonly processoConexaoRepository: Repository<ProcessoConexao>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async listarPorProcesso(processoId: string): Promise<Automacao[]> {
@@ -327,9 +331,12 @@ export class AutomacoesService {
     manager: EntityManager,
     card: Card,
     faseId: string,
+    integracoesService: IntegracoesService,
     cardsCriados?: Card[],
     profundidade = 0,
     cardsAtualizados?: Map<string, Card>,
+    emailsEnfileirados?: string[],
+    notificacoesEnfileiradas?: NotificacaoEnfileirada[],
   ): Promise<void> {
     this.verificarProfundidade(profundidade);
 
@@ -352,9 +359,12 @@ export class AutomacoesService {
       manager,
       disparadas,
       card,
+      integracoesService,
       cardsCriados,
       profundidade,
       cardsAtualizados,
+      emailsEnfileirados,
+      notificacoesEnfileiradas,
     );
   }
 
@@ -366,9 +376,12 @@ export class AutomacoesService {
     manager: EntityManager,
     card: Card,
     camposAlterados: string[],
+    integracoesService: IntegracoesService,
     cardsCriados?: Card[],
     profundidade = 0,
     cardsAtualizados?: Map<string, Card>,
+    emailsEnfileirados?: string[],
+    notificacoesEnfileiradas?: NotificacaoEnfileirada[],
   ): Promise<void> {
     if (camposAlterados.length === 0) {
       return;
@@ -396,9 +409,12 @@ export class AutomacoesService {
       manager,
       disparadas,
       card,
+      integracoesService,
       cardsCriados,
       profundidade,
       cardsAtualizados,
+      emailsEnfileirados,
+      notificacoesEnfileiradas,
     );
   }
 
@@ -417,9 +433,12 @@ export class AutomacoesService {
     manager: EntityManager,
     automacoes: Automacao[],
     card: Card,
+    integracoesService: IntegracoesService,
     cardsCriados: Card[] | undefined,
     profundidade: number,
     cardsAtualizados: Map<string, Card> | undefined,
+    emailsEnfileirados: string[] | undefined,
+    notificacoesEnfileiradas: NotificacaoEnfileirada[] | undefined,
   ): Promise<void> {
     for (const automacao of automacoes) {
       try {
@@ -428,9 +447,12 @@ export class AutomacoesService {
             manager,
             card,
             acao,
+            integracoesService,
             cardsCriados,
             profundidade,
             cardsAtualizados,
+            emailsEnfileirados,
+            notificacoesEnfileiradas,
           );
         }
         await manager.save(
@@ -443,27 +465,48 @@ export class AutomacoesService {
           }),
         );
       } catch (error) {
-        await manager.save(
-          manager.create(AutomacaoExecucao, {
-            automacaoId: automacao.id,
-            cardId: card.id,
-            gatilhoTipo: automacao.gatilhoTipo,
-            status: StatusExecucao.ERRO,
-            detalhe: { mensagem: (error as Error).message },
-          }),
+        // Gravado numa transação própria (nova conexão), não na `manager`
+        // recebida — essa vai sofrer rollback por causa deste mesmo erro, e
+        // levaria a linha de auditoria junto se ela fosse escrita ali. Sem
+        // isso, um erro de automação fica completamente invisível.
+        await this.registrarErroForaDaTransacao(
+          automacao,
+          card,
+          error as Error,
         );
         throw error;
       }
     }
   }
 
+  private async registrarErroForaDaTransacao(
+    automacao: Automacao,
+    card: Card,
+    error: Error,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (managerIndependente) => {
+      await managerIndependente.save(
+        managerIndependente.create(AutomacaoExecucao, {
+          automacaoId: automacao.id,
+          cardId: card.id,
+          gatilhoTipo: automacao.gatilhoTipo,
+          status: StatusExecucao.ERRO,
+          detalhe: { mensagem: error.message },
+        }),
+      );
+    });
+  }
+
   private async executarAcao(
     manager: EntityManager,
     card: Card,
     acao: AutomacaoAcao,
+    integracoesService: IntegracoesService,
     cardsCriados: Card[] | undefined,
     profundidade: number,
     cardsAtualizados: Map<string, Card> | undefined,
+    emailsEnfileirados: string[] | undefined,
+    notificacoesEnfileiradas: NotificacaoEnfileirada[] | undefined,
   ): Promise<void> {
     switch (acao.tipo) {
       case AcaoTipo.ATUALIZAR_CAMPO: {
@@ -486,13 +529,17 @@ export class AutomacoesService {
           dadosAntes: { [campo]: valorAntigo ?? null },
           dadosDepois: { [campo]: valorResolvido },
         });
-        await this.executarGatilhoCampoAtualizado(
+        await dispararGatilhosCampoAtualizado(
           manager,
           card,
           [campo],
+          this,
+          integracoesService,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
+          emailsEnfileirados,
+          notificacoesEnfileiradas,
         );
         return;
       }
@@ -530,6 +577,7 @@ export class AutomacoesService {
         const filho = await criarCardEmFase(
           manager,
           this,
+          integracoesService,
           {
             processoId: conexao.processoDestinoId,
             titulo: titulo
@@ -540,6 +588,8 @@ export class AutomacoesService {
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
+          emailsEnfileirados,
+          notificacoesEnfileiradas,
         );
         filho.paiCardId = card.id;
         filho.paiConexaoId = conexao.id;
@@ -569,12 +619,15 @@ export class AutomacoesService {
         await moverCardParaFase(
           manager,
           this,
+          integracoesService,
           cardPai,
           faseDestinoId,
           ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
+          emailsEnfileirados,
+          notificacoesEnfileiradas,
         );
         return;
       }
@@ -600,12 +653,15 @@ export class AutomacoesService {
         await moverCardParaFase(
           manager,
           this,
+          integracoesService,
           cardFilho,
           faseDestinoId,
           ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
+          emailsEnfileirados,
+          notificacoesEnfileiradas,
         );
         return;
       }
@@ -614,12 +670,15 @@ export class AutomacoesService {
         await moverCardParaFase(
           manager,
           this,
+          integracoesService,
           card,
           faseDestinoId,
           ATOR_AUTOMATICO,
           cardsCriados,
           profundidade + 1,
           cardsAtualizados,
+          emailsEnfileirados,
+          notificacoesEnfileiradas,
         );
         return;
       }

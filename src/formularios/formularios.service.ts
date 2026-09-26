@@ -1,7 +1,7 @@
 import {
   Injectable,
   NotFoundException,
-  NotImplementedException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -13,10 +13,18 @@ import { CardsService } from '../cards/cards.service';
 import { AnexoParaUpload, CardAnexosService } from '../cards/anexos.service';
 import { CampoFormulario } from '../processos/formulario/campo-formulario.interface';
 import { PreencherFormularioEntradaDto } from './dto/preencher-formulario-entrada.dto';
+import { AtualizarCardViaFormularioFaseDto } from './dto/atualizar-card-via-formulario-fase.dto';
 
 export interface FormularioExternoResposta {
   processoId: string;
   processoNome: string;
+  requerAutenticacao: boolean;
+  campos: CampoFormulario[];
+}
+
+export interface FormularioFaseResposta {
+  processoId: string;
+  faseId: string;
   requerAutenticacao: boolean;
   campos: CampoFormulario[];
 }
@@ -103,28 +111,65 @@ export class FormulariosService {
     return this.cardAnexosService.enviar(cardId, arquivo, usuarioId);
   }
 
-  // Ainda não existe formulário de fase (ver CLAUDE.md) — só deixa a rota e
-  // a validação de processo/fase prontas pra quando isso for implementado.
-  async obterFormularioFase(
+  private async buscarFaseOuFalhar(
     processoId: string,
     faseId: string,
-  ): Promise<never> {
-    await this.buscarProcessoOuFalhar(processoId);
+  ): Promise<Fase> {
     const fase = await this.faseRepository.findOne({
       where: { id: faseId, processoId },
     });
     if (!fase) {
       throw new NotFoundException('Fase não encontrada neste processo');
     }
-    throw new NotImplementedException(
-      'Formulário de fase ainda não implementado',
-    );
+    return fase;
   }
 
-  async criarCardViaFormularioFase(
+  // Metadata do formulário de fase: diferente do de entrada, não serve pra
+  // criar card — serve pra preencher/atualizar campos de um card que já está
+  // nessa fase (ver atualizarCardViaFormularioFase).
+  async obterFormularioFase(
     processoId: string,
     faseId: string,
-  ): Promise<never> {
-    return this.obterFormularioFase(processoId, faseId);
+  ): Promise<FormularioFaseResposta> {
+    const processo = await this.buscarProcessoOuFalhar(processoId);
+    const fase = await this.buscarFaseOuFalhar(processoId, faseId);
+    return {
+      processoId: processo.id,
+      faseId: fase.id,
+      requerAutenticacao: processo.formularioExternoRequerAutenticacao,
+      campos: fase.formularioFase,
+    };
+  }
+
+  // Reaproveita CardsService.atualizarCampos (mesmo merge parcial, mesmo
+  // disparo de CAMPO_ATUALIZADO/card:atualizado que a rota interna
+  // PATCH /cards/:id/campos) — só adiciona a checagem de posse (card
+  // pertence ao processo do link) e de que o card ainda está na fase do
+  // link, senão alguém preenche um link "velho" depois que o card já saiu
+  // dali. `usuarioId` null cobre submissão anônima, igual ao resto do
+  // módulo (ver FormularioExternoGuard).
+  async atualizarCardViaFormularioFase(
+    processoId: string,
+    faseId: string,
+    cardId: string,
+    dto: AtualizarCardViaFormularioFaseDto,
+    usuarioId: string | null,
+  ): Promise<Card> {
+    await this.buscarProcessoOuFalhar(processoId);
+    await this.buscarFaseOuFalhar(processoId, faseId);
+
+    const card = await this.cardRepository.findOne({
+      where: { id: cardId, processoId },
+    });
+    if (!card) {
+      throw new NotFoundException('Card não encontrado neste processo');
+    }
+    if (card.faseAtualId !== faseId) {
+      throw new UnprocessableEntityException(
+        'Card não está mais nessa fase — link de formulário desatualizado',
+      );
+    }
+
+    return this.cardsService.atualizarCampos(cardId, dto, usuarioId);
   }
 }

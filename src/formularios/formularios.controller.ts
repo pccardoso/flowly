@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   UploadedFile,
   UseGuards,
@@ -18,6 +19,7 @@ import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import { FormulariosService } from './formularios.service';
 import { FormularioExternoGuard } from './guards/formulario-externo.guard';
 import { PreencherFormularioEntradaDto } from './dto/preencher-formulario-entrada.dto';
+import { AtualizarCardViaFormularioFaseDto } from './dto/atualizar-card-via-formulario-fase.dto';
 
 const TAMANHO_MAXIMO_ANEXO = 25 * 1024 * 1024;
 
@@ -83,9 +85,9 @@ export class FormulariosController {
     );
   }
 
-  // Link do formulário de fase (mesclagem processoId + faseId) — reservado
-  // pra quando o formulário de fase existir. Por enquanto sempre 501, mas já
-  // validando processo/fase e passando pelo mesmo guard de autenticação.
+  // Metadata do formulário de fase (link = mesclagem processoId + faseId): o
+  // front usa pra saber quais campos pedir ao preencher um card que já está
+  // nessa fase — ao contrário do de entrada, não cria card.
   @Get('processos/:processoId/fases/:faseId')
   obterFormularioFase(
     @Param('processoId', ParseUUIDPipe) processoId: string,
@@ -94,14 +96,24 @@ export class FormulariosController {
     return this.formulariosService.obterFormularioFase(processoId, faseId);
   }
 
-  @Post('processos/:processoId/fases/:faseId/cards')
-  criarCardViaFormularioFase(
+  // Submissão do formulário de fase: atualiza campos de um card que já
+  // existe e já está nessa fase (link = mesclagem processoId + faseId +
+  // cardId). Nunca cria card novo — ver criarCardViaFormularioEntrada acima
+  // pra esse caso.
+  @Patch('processos/:processoId/fases/:faseId/cards/:cardId')
+  atualizarCardViaFormularioFase(
     @Param('processoId', ParseUUIDPipe) processoId: string,
     @Param('faseId', ParseUUIDPipe) faseId: string,
+    @Param('cardId', ParseUUIDPipe) cardId: string,
+    @Body() dto: AtualizarCardViaFormularioFaseDto,
+    @CurrentUser() usuario: JwtPayload | undefined,
   ) {
-    return this.formulariosService.criarCardViaFormularioFase(
+    return this.formulariosService.atualizarCardViaFormularioFase(
       processoId,
       faseId,
+      cardId,
+      dto,
+      usuario?.sub ?? null,
     );
   }
 }

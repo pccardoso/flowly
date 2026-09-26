@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { Card } from './entities/card.entity';
 import { CardAnexo } from './entities/card-anexo.entity';
 import { registrarEventoCard } from './card-evento.helper';
@@ -39,7 +39,7 @@ export class CardAnexosService {
       throw new NotFoundException('Card não encontrado');
     }
 
-    const objectKey = `cards/${cardId}/${randomUUID()}-${arquivo.originalname}`;
+    const objectKey = this.gerarObjectKey(cardId, arquivo);
     await this.storageService.salvar(
       objectKey,
       arquivo.buffer,
@@ -47,32 +47,50 @@ export class CardAnexosService {
     );
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
-        const anexo = await manager.save(
-          manager.create(CardAnexo, {
-            cardId,
-            nomeOriginal: arquivo.originalname,
-            objectKey,
-            mimeType: arquivo.mimetype,
-            tamanho: arquivo.size,
-          }),
-        );
-        await registrarEventoCard(manager, {
-          cardId,
-          tipo: CardEventoTipo.ANEXO_ADICIONADO,
-          ator: { usuarioId, automatico: false },
-          dadosDepois: {
-            anexoId: anexo.id,
-            nomeOriginal: anexo.nomeOriginal,
-          },
-        });
-        return anexo;
-      });
+      return await this.dataSource.transaction((manager) =>
+        this.registrar(manager, cardId, arquivo, objectKey, usuarioId),
+      );
     } catch (erro) {
       // Evita objeto órfão no MinIO se o registro da metadata falhar.
       await this.storageService.remover(objectKey).catch(() => undefined);
       throw erro;
     }
+  }
+
+  gerarObjectKey(cardId: string, arquivo: AnexoParaUpload): string {
+    return `cards/${cardId}/${randomUUID()}-${arquivo.originalname}`;
+  }
+
+  // Grava a linha de CardAnexo + o evento ANEXO_ADICIONADO dentro da
+  // transação de quem chamou. O upload pro MinIO (objectKey) já precisa ter
+  // sido feito por quem chama — que também é quem limpa o objeto se a
+  // transação falhar.
+  async registrar(
+    manager: EntityManager,
+    cardId: string,
+    arquivo: AnexoParaUpload,
+    objectKey: string,
+    usuarioId: string | null,
+  ): Promise<CardAnexo> {
+    const anexo = await manager.save(
+      manager.create(CardAnexo, {
+        cardId,
+        nomeOriginal: arquivo.originalname,
+        objectKey,
+        mimeType: arquivo.mimetype,
+        tamanho: arquivo.size,
+      }),
+    );
+    await registrarEventoCard(manager, {
+      cardId,
+      tipo: CardEventoTipo.ANEXO_ADICIONADO,
+      ator: { usuarioId, automatico: false },
+      dadosDepois: {
+        anexoId: anexo.id,
+        nomeOriginal: anexo.nomeOriginal,
+      },
+    });
+    return anexo;
   }
 
   async listar(cardId: string): Promise<CardAnexo[]> {

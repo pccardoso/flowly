@@ -47,4 +47,43 @@ export class StorageService implements OnModuleInit {
   async remover(objectKey: string): Promise<void> {
     await this.client.removeObject(this.bucket, objectKey);
   }
+
+  // Cópia server-side (MinIO copia internamente, sem baixar/reenviar bytes
+  // pelo Node) — usado pelo step ACAO_ANEXAR_ARQUIVO pra duplicar o arquivo-
+  // modelo do step num objectKey novo por card. Cópia (nunca referência ao
+  // mesmo objectKey) é obrigatório: CardAnexosService.remover apaga o
+  // objectKey do MinIO quando um anexo é removido — se dois CardAnexo
+  // compartilhassem o mesmo objeto, remover um apagaria o arquivo do outro.
+  async copiar(
+    origemObjectKey: string,
+    destinoObjectKey: string,
+  ): Promise<void> {
+    await this.client.copyObject(
+      this.bucket,
+      destinoObjectKey,
+      `/${this.bucket}/${origemObjectKey}`,
+    );
+  }
+
+  // Remove todo objeto sob um prefixo — usado pra limpar o staging de
+  // arquivo do step ACAO_ANEXAR_ARQUIVO (integracoes/{processoId}/
+  // steps-arquivos/...) quando o processo inteiro é removido: como esses
+  // arquivos não têm uma linha de banco própria (só existem enquanto
+  // referenciados dentro de IntegracaoStep.config.arquivos), um cleanup por
+  // objectKey individual não bastaria pra pegar upload abandonado (nunca
+  // usado em nenhum step) — varrer pelo prefixo cobre os dois casos.
+  async removerPorPrefixo(prefixo: string): Promise<void> {
+    const objectKeys: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const stream = this.client.listObjectsV2(this.bucket, prefixo, true);
+      stream.on('data', (item) => {
+        if (item.name) objectKeys.push(item.name);
+      });
+      stream.on('end', () => resolve());
+      stream.on('error', reject);
+    });
+    if (objectKeys.length > 0) {
+      await this.client.removeObjects(this.bucket, objectKeys);
+    }
+  }
 }

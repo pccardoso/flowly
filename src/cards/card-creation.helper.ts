@@ -11,7 +11,14 @@ import { Card } from './entities/card.entity';
 import { CardMovimentacao } from './entities/card-movimentacao.entity';
 import { CardEventoTipo } from './enums/card-evento-tipo.enum';
 import { AtorEvento, registrarEventoCard } from './card-evento.helper';
+import {
+  dispararGatilhoIntegracaoCardCriado,
+  dispararGatilhosCardEntrouNaFase,
+} from './gatilho-dispatch.helper';
 import type { AutomacoesService } from '../automacoes/automacoes.service';
+import type { IntegracoesService } from '../integracoes/integracoes.service';
+import type { GatilhoExecucaoJobPayload } from '../gatilhos-execucao/gatilho-execucao.types';
+import type { NotificacaoEnfileirada } from '../integracoes/notificacao-enfileirada.interface';
 
 export interface CriarCardEmFaseParams {
   processoId: string;
@@ -19,6 +26,7 @@ export interface CriarCardEmFaseParams {
   // correspondente vier em `campos` — nesse caso o título é derivado.
   titulo?: string;
   campos?: Record<string, unknown>;
+  dataVencimento?: Date | null;
 }
 
 // Deriva o título quando não veio explícito: usa `campos[tituloCampoId]`
@@ -63,14 +71,31 @@ function resolverTitulo(
 // `card:atualizado`) só depois que a transação inteira for commitada — nunca
 // durante ela, pra não anunciar algo que pode ser desfeito por um erro mais
 // adiante na mesma transação.
+//
+// `profundidade === 0` identifica sempre uma chamada de nível raiz (a
+// própria criação do card feita por CardsService, nunca um encadeamento —
+// toda ação de automação/integração que cria um card filho passa
+// `profundidade + 1`, no mínimo 1). Nesse caso o gatilho reage em segundo
+// plano: em vez de rodar automações/integrações dentro desta transação
+// (que é a transação do save do usuário), só empilha os jobs em
+// `gatilhosParaFila` — quem chamou os enfileira de verdade (GatilhoExecucao
+// DispatchService) depois que a transação comitar, pra o save nunca esperar
+// nem ser desfeito por um step mal configurado (ver
+// PLANO_EXECUCAO_ASSINCRONA.md). Encadeamentos (profundidade > 0) continuam
+// síncronos, dentro da transação de quem os disparou — hoje a transação do
+// worker que processa o job (ver GatilhoExecucaoProcessor).
 export async function criarCardEmFase(
   manager: EntityManager,
   automacoesService: AutomacoesService,
+  integracoesService: IntegracoesService,
   params: CriarCardEmFaseParams,
   ator: AtorEvento,
   cardsCriados?: Card[],
   profundidade = 0,
   cardsAtualizados?: Map<string, Card>,
+  emailsEnfileirados?: string[],
+  notificacoesEnfileiradas?: NotificacaoEnfileirada[],
+  gatilhosParaFila?: GatilhoExecucaoJobPayload[],
 ): Promise<Card> {
   const processo = await manager.findOne(Processo, {
     where: { id: params.processoId },
@@ -99,6 +124,7 @@ export async function criarCardEmFase(
       processoId: processo.id,
       faseAtualId: faseInicial.id,
       campos: params.campos ?? {},
+      dataVencimento: params.dataVencimento ?? null,
     }),
   );
   cardsCriados?.push(card);
@@ -115,17 +141,49 @@ export async function criarCardEmFase(
     cardId: card.id,
     tipo: CardEventoTipo.CARD_CRIADO,
     ator,
-    dadosDepois: { titulo: card.titulo, faseId: faseInicial.id },
+    dadosDepois: {
+      titulo: card.titulo,
+      faseId: faseInicial.id,
+      ...(card.dataVencimento
+        ? { dataVencimento: card.dataVencimento.toISOString() }
+        : {}),
+    },
   });
 
-  await automacoesService.executarGatilhoCardEntrouNaFase(
-    manager,
-    card,
-    faseInicial.id,
-    cardsCriados,
-    profundidade,
-    cardsAtualizados,
-  );
+  if (profundidade === 0) {
+    gatilhosParaFila?.push({
+      tipo: 'CARD_CRIADO',
+      cardId: card.id,
+      ator,
+      faseId: faseInicial.id,
+    });
+  } else {
+    await dispararGatilhoIntegracaoCardCriado(
+      manager,
+      card,
+      ator,
+      integracoesService,
+      automacoesService,
+      cardsCriados,
+      profundidade,
+      cardsAtualizados,
+      emailsEnfileirados,
+      notificacoesEnfileiradas,
+    );
+
+    await dispararGatilhosCardEntrouNaFase(
+      manager,
+      card,
+      faseInicial.id,
+      automacoesService,
+      integracoesService,
+      cardsCriados,
+      profundidade,
+      cardsAtualizados,
+      emailsEnfileirados,
+      notificacoesEnfileiradas,
+    );
+  }
 
   return card;
 }
@@ -140,12 +198,16 @@ export async function criarCardEmFase(
 export async function moverCardParaFase(
   manager: EntityManager,
   automacoesService: AutomacoesService,
+  integracoesService: IntegracoesService,
   card: Card,
   faseDestinoId: string,
   ator: AtorEvento,
   cardsCriados?: Card[],
   profundidade = 0,
   cardsAtualizados?: Map<string, Card>,
+  emailsEnfileirados?: string[],
+  notificacoesEnfileiradas?: NotificacaoEnfileirada[],
+  gatilhosParaFila?: GatilhoExecucaoJobPayload[],
 ): Promise<CardMovimentacao> {
   if (card.faseAtualId === faseDestinoId) {
     throw new UnprocessableEntityException('Card já está nessa fase');
@@ -193,14 +255,26 @@ export async function moverCardParaFase(
     dadosDepois: { faseId: faseDestinoId, faseNome: faseDestino.nome },
   });
 
-  await automacoesService.executarGatilhoCardEntrouNaFase(
-    manager,
-    card,
-    faseDestinoId,
-    cardsCriados,
-    profundidade,
-    cardsAtualizados,
-  );
+  if (profundidade === 0) {
+    gatilhosParaFila?.push({
+      tipo: 'CARD_ENTROU_NA_FASE',
+      cardId: card.id,
+      faseId: faseDestinoId,
+    });
+  } else {
+    await dispararGatilhosCardEntrouNaFase(
+      manager,
+      card,
+      faseDestinoId,
+      automacoesService,
+      integracoesService,
+      cardsCriados,
+      profundidade,
+      cardsAtualizados,
+      emailsEnfileirados,
+      notificacoesEnfileiradas,
+    );
+  }
 
   return movimentacao;
 }

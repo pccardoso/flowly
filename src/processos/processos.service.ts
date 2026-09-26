@@ -14,6 +14,7 @@ import { FaseTransicao } from '../fases/entities/fase-transicao.entity';
 import { ProcessoConexao } from './entities/processo-conexao.entity';
 import { Card } from '../cards/entities/card.entity';
 import { CardAnexo } from '../cards/entities/card-anexo.entity';
+import { CardPdfEmissao } from '../cards/entities/card-pdf-emissao.entity';
 import { CreateProcessoDto } from './dto/create-processo.dto';
 import { UpdateProcessoDto } from './dto/update-processo.dto';
 import { CreateFaseDto } from './dto/create-fase.dto';
@@ -22,6 +23,7 @@ import { CreateFaseTransicaoDto } from './dto/create-fase-transicao.dto';
 import { UpdateFaseTransicaoDto } from './dto/update-fase-transicao.dto';
 import { CreateProcessoConexaoDto } from './dto/create-processo-conexao.dto';
 import { DefinirFormularioEntradaDto } from './dto/definir-formulario-entrada.dto';
+import { DefinirFormularioFaseDto } from './dto/definir-formulario-fase.dto';
 import { CampoFormulario } from './formulario/campo-formulario.interface';
 import { StorageService } from '../storage/storage.service';
 
@@ -118,7 +120,10 @@ export class ProcessosService {
       .createQueryBuilder('card')
       .select('card.processoId', 'processoId')
       .addSelect('COUNT(*)', 'total')
+      .innerJoin('card.faseAtual', 'fase')
+      // Cards em fase final não entram na contagem geral do processo.
       .where('card.processoId IN (:...processoIds)', { processoIds })
+      .andWhere('fase.isFinal = false')
       .groupBy('card.processoId')
       .getRawMany<{ processoId: string; total: string }>();
     const totalPorProcesso = new Map(
@@ -179,6 +184,32 @@ export class ProcessosService {
     return this.paraResposta(salvo);
   }
 
+  // `card.campos` é um único jsonb por card, compartilhado por formularioEntrada
+  // e por todos os formularioFase do processo — então o id de campo precisa ser
+  // único no processo inteiro, não só dentro de cada formulário. Senão dois
+  // campos gravariam na mesma chave e o catálogo (relatórios/PDF/integrações)
+  // esconderia um deles.
+  private validarIdsUnicosNoProcesso(
+    novos: CampoFormulario[],
+    existentes: CampoFormulario[],
+  ): void {
+    const ids = novos.map((campo) => campo.id);
+    const repetidos = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (repetidos.length > 0) {
+      throw new UnprocessableEntityException(
+        `Campos do formulário não podem repetir o mesmo id: ${[...new Set(repetidos)].join(', ')}`,
+      );
+    }
+
+    const idsExistentes = new Set(existentes.map((campo) => campo.id));
+    const conflitos = ids.filter((id) => idsExistentes.has(id));
+    if (conflitos.length > 0) {
+      throw new UnprocessableEntityException(
+        `Já existe campo com o mesmo id em outro formulário deste processo (entrada ou outra fase): ${conflitos.join(', ')}`,
+      );
+    }
+  }
+
   // Substitui o formulário de entrada inteiro (o front edita a lista
   // completa numa tela só e salva de uma vez, igual PUT). Só a definição por
   // enquanto — a criação de card ainda não valida `campos` contra isso.
@@ -193,12 +224,13 @@ export class ProcessosService {
       throw new NotFoundException('Processo não encontrado');
     }
 
-    const ids = dto.campos.map((campo) => campo.id);
-    if (new Set(ids).size !== ids.length) {
-      throw new UnprocessableEntityException(
-        'Campos do formulário não podem repetir o mesmo id',
-      );
-    }
+    const fases = await this.faseRepository.find({
+      where: { processoId: id },
+    });
+    this.validarIdsUnicosNoProcesso(
+      dto.campos,
+      fases.flatMap((fase) => fase.formularioFase),
+    );
 
     processo.formularioEntrada = dto.campos;
     await this.processoRepository.save(processo);
@@ -354,24 +386,41 @@ export class ProcessosService {
         const anexos = cardIds.length
           ? await manager.find(CardAnexo, { where: { cardId: In(cardIds) } })
           : [];
+        const pdfEmissoes = cardIds.length
+          ? await manager.find(CardPdfEmissao, {
+              where: { cardId: In(cardIds) },
+            })
+          : [];
 
         // Fases, transições, conexões de saída, cards (com seus
-        // anexos/comentários/movimentações) e automações deste processo são
-        // removidos em cascata pelo banco (onDelete: CASCADE nas entidades).
+        // anexos/comentários/movimentações/emissões de PDF) e automações
+        // deste processo são removidos em cascata pelo banco (onDelete:
+        // CASCADE nas entidades) — só os modelos de PDF do processo
+        // (pdf_modelos) não são coletados aqui porque não têm objectKey
+        // próprio (são HTML/CSS, não arquivo).
         await manager.delete(Processo, processoId);
 
         return {
           imagemObjectKey: processo.imagemObjectKey,
-          anexoObjectKeys: anexos.map((anexo) => anexo.objectKey),
+          anexoObjectKeys: [
+            ...anexos.map((anexo) => anexo.objectKey),
+            ...pdfEmissoes
+              .map((emissao) => emissao.objectKey)
+              .filter((objectKey): objectKey is string => objectKey !== null),
+          ],
         };
       });
 
     const objectKeys = imagemObjectKey
       ? [...anexoObjectKeys, imagemObjectKey]
       : anexoObjectKeys;
-    await Promise.allSettled(
-      objectKeys.map((objectKey) => this.storageService.remover(objectKey)),
-    );
+    await Promise.allSettled([
+      ...objectKeys.map((objectKey) => this.storageService.remover(objectKey)),
+      // Staging de arquivo do step ACAO_ANEXAR_ARQUIVO (ver IntegracoesService.
+      // uploadArquivoStep) não tem linha de banco própria — limpa por prefixo,
+      // não por objectKey individual (ver StorageService.removerPorPrefixo).
+      this.storageService.removerPorPrefixo(`integracoes/${processoId}/`),
+    ]);
   }
 
   async criarFase(processoId: string, dto: CreateFaseDto): Promise<Fase> {
@@ -408,8 +457,44 @@ export class ProcessosService {
     if (dto.cor !== undefined) {
       fase.cor = dto.cor;
     }
+    if (dto.isFinal !== undefined) {
+      fase.isFinal = dto.isFinal;
+    }
 
     return this.faseRepository.save(fase);
+  }
+
+  // Mesmo padrão de validação de definirFormularioEntrada (ids únicos), mas
+  // sem checar referência cruzada com tituloCampoId/camposExibidosNoCard —
+  // esses só existem em nível de processo, não de fase.
+  async definirFormularioFase(
+    processoId: string,
+    faseId: string,
+    dto: DefinirFormularioFaseDto,
+  ): Promise<CampoFormulario[]> {
+    const fase = await this.faseRepository.findOne({
+      where: { id: faseId, processoId },
+    });
+    if (!fase) {
+      throw new NotFoundException('Fase não encontrada neste processo');
+    }
+
+    const processo = await this.processoRepository.findOne({
+      where: { id: processoId },
+    });
+    const outrasFases = await this.faseRepository.find({
+      where: { processoId },
+    });
+    this.validarIdsUnicosNoProcesso(dto.campos, [
+      ...(processo?.formularioEntrada ?? []),
+      ...outrasFases
+        .filter((outra) => outra.id !== faseId)
+        .flatMap((outra) => outra.formularioFase),
+    ]);
+
+    fase.formularioFase = dto.campos;
+    await this.faseRepository.save(fase);
+    return fase.formularioFase;
   }
 
   // Apaga a fase e todos os cards nela (com seus anexos/comentários/
@@ -489,6 +574,11 @@ export class ProcessosService {
         const anexos = cardIds.length
           ? await manager.find(CardAnexo, { where: { cardId: In(cardIds) } })
           : [];
+        const pdfEmissoes = cardIds.length
+          ? await manager.find(CardPdfEmissao, {
+              where: { cardId: In(cardIds) },
+            })
+          : [];
 
         // Cards precisam sumir antes da fase por causa do onDelete: RESTRICT
         // em Card.faseAtual.
@@ -497,7 +587,14 @@ export class ProcessosService {
         }
         await manager.delete(Fase, faseId);
 
-        return { anexoObjectKeys: anexos.map((anexo) => anexo.objectKey) };
+        return {
+          anexoObjectKeys: [
+            ...anexos.map((anexo) => anexo.objectKey),
+            ...pdfEmissoes
+              .map((emissao) => emissao.objectKey)
+              .filter((objectKey): objectKey is string => objectKey !== null),
+          ],
+        };
       },
     );
 
@@ -739,6 +836,8 @@ export class ProcessosService {
         nome: fase.nome,
         ordem: fase.ordem,
         cor: fase.cor,
+        isFinal: fase.isFinal,
+        formularioFase: fase.formularioFase,
         transicoesPermitidas: transicoes
           .filter((transicao) => transicao.faseOrigemId === fase.id)
           .map((transicao) => ({

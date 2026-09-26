@@ -24,4 +24,8 @@ export interface MetaRequerPermissao {
 export const RequerPermissao = (
   alias: string,
   resolvedorProcessoId?: ResolvedorProcessoId,
-) => SetMetadata(REQUER_PERMISSAO_KEY, { alias, resolvedorProcessoId } as MetaRequerPermissao);
+) =>
+  SetMetadata(REQUER_PERMISSAO_KEY, {
+    alias,
+    resolvedorProcessoId,
+  });

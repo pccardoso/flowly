@@ -18,10 +18,16 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-flowly}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-flowly123}
       MINIO_BUCKET: ${MINIO_BUCKET:-flowly-anexos}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      EMAIL_CREDENTIALS_KEY: ${EMAIL_CREDENTIALS_KEY:-}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -60,6 +66,20 @@ services:
       retries: 5
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '${REDIS_HOST_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   minio_data:
+  redis_data:
